@@ -83,7 +83,7 @@ try {
         $defaults = [
             'allow_register' => '0',
             'require_invite' => '0',
-            'site_name'      => 'Email‑Tracker',
+            'site_name'      => '邮件追踪',
             'smtp_host'      => '',
             'smtp_port'      => '',
             'smtp_user'      => '',
@@ -141,6 +141,11 @@ try {
 
     // 3. Ensure newly introduced config keys exist
     $db->exec("INSERT OR IGNORE INTO configs(key, value) VALUES ('login_captcha', '1');");
+
+    // 4. Performance indexes (IF NOT EXISTS is safe to run every time)
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_codes_user_id ON codes(user_id);");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_logs_code_id ON logs(code_id);");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);");
 
 } catch (PDOException $e) {
     die('DB错误:' . $e->getMessage());

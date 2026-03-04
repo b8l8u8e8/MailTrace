@@ -77,11 +77,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 include 'includes/header.php';
+$_siteName = cfg('site_name') ?: '追踪系统';
 ?>
 
-<div class="row justify-content-center">
-  <div class="col-md-5 col-lg-4">
-    <h3 class="mb-3">注册</h3>
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="brand-logo">&#9993;</div>
+      <h4><?= htmlspecialchars($_siteName) ?></h4>
+      <p>创建新账户</p>
+    </div>
+
+    <div class="auth-nav">
+      <a href="index.php">登录</a>
+      <a class="active" href="register.php">注册</a>
+    </div>
 
     <?php if ($err): ?>
       <div class="alert alert-danger"><?= htmlspecialchars($err) ?></div>
@@ -90,13 +100,25 @@ include 'includes/header.php';
     <?php endif; ?>
 
     <form method="post">
-      <input name="user" class="form-control mb-2" placeholder="用户名" value="<?= htmlspecialchars($username) ?>" required>
-      <input name="pass" type="password" class="form-control mb-2" placeholder="密码" required>
-      <input name="email" type="email" class="form-control mb-2" placeholder="邮箱" value="<?= htmlspecialchars($email) ?>" required>
+      <div class="mb-3">
+        <label class="form-label">用户名</label>
+        <input name="user" class="form-control" placeholder="请输入用户名" value="<?= htmlspecialchars($username) ?>" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">密码</label>
+        <input name="pass" type="password" class="form-control" placeholder="请输入密码" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">邮箱</label>
+        <input name="email" type="email" class="form-control" placeholder="请输入邮箱地址" value="<?= htmlspecialchars($email) ?>" required>
+      </div>
       <?php if ($need_invite): ?>
-        <input name="invite" class="form-control mb-2" placeholder="卡密" value="<?= htmlspecialchars($invite) ?>" required>
+      <div class="mb-3">
+        <label class="form-label">卡密</label>
+        <input name="invite" class="form-control" placeholder="请输入邀请卡密" value="<?= htmlspecialchars($invite) ?>" required>
+      </div>
       <?php endif; ?>
-      <button class="btn btn-success w-100">注册</button>
+      <button class="btn btn-success w-100" style="padding: 0.65rem;">注册</button>
     </form>
   </div>
 </div>

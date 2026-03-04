@@ -2,7 +2,11 @@
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
 
-$mode = $_GET['mode'] ?? 'login';
+if (current_user()) {
+    header('Location: dashboard.php');
+    exit;
+}
+
 $err = '';
 $msg = '';
 $loginCaptchaEnabled = (cfg('login_captcha') === '' || cfg('login_captcha') === '1');
@@ -18,7 +22,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $captchaOk = hash_equals($captcha['code'], $captchaInput) && (time() - (int)$captcha['time'] <= 300);
             }
 
-            // 单次验证码，验证后即失效
             unset($_SESSION['login_captcha']);
 
             if (!$captchaOk) {
@@ -34,100 +37,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
         }
-    } elseif (($_POST['act'] ?? '') === 'reg' && cfg('allow_register') == '1') {
-        $u = trim($_POST['user']);
-        $p = $_POST['pass'];
-        $mail = $_POST['email'];
-
-        if (!$u || !$p || !filter_var($mail, FILTER_VALIDATE_EMAIL)) {
-            $err = '信息不完整';
-        } else {
-            global $db;
-            $needInvite = cfg('require_invite') == '1';
-            $inviteCode = trim($_POST['invite'] ?? '');
-
-            if ($needInvite) {
-                if (!$inviteCode) {
-                    $err = '请填写卡密';
-                } else {
-                    $stmt = $db->prepare('SELECT * FROM invite_codes WHERE code=? AND used=0');
-                    $stmt->execute([$inviteCode]);
-                    if (!$stmt->fetch()) {
-                        $err = '卡密无效';
-                    }
-                }
-            }
-
-            $hash = password_hash($p, PASSWORD_DEFAULT);
-            $tok = gen_token();
-            try {
-                $db->prepare('INSERT INTO pending(username,password_hash,email,token) VALUES (?,?,?,?)')->execute([$u, $hash, $mail, $tok]);
-                $activationLink = base_url() . '/activate.php?token=' . $tok;
-                $body = "您好 {$u},\n\n感谢注册 Email Tracker！请点击以下链接激活您的账号：\n{$activationLink}\n\n如果无法直接点击，请将上述链接复制到浏览器打开。\n\n祝好！\nEmail Tracker 团队";
-                smtp_send($mail, '欢迎注册 Email Tracker', $body);
-
-                if ($needInvite && !$err) {
-                    $db->prepare('UPDATE invite_codes SET used=1,used_at=datetime("now") WHERE code=?')->execute([$inviteCode]);
-                }
-
-                $msg = '已发送激活邮件';
-                $mode = 'login';
-            } catch (PDOException $e) {
-                $err = '用户名已存在';
-            }
-        }
     }
 }
 
 include 'includes/header.php';
+$_siteName = cfg('site_name') ?: '追踪系统';
 ?>
-<div class="row justify-content-center">
-  <div class="col-md-5 col-lg-4">
-    <ul class="nav nav-tabs mb-3">
-      <li class="nav-item"><a class="nav-link <?= $mode=='login'?'active':'' ?>" href="?mode=login">登录</a></li>
-      <?php if (cfg('allow_register') == '1'): ?><li class="nav-item"><a class="nav-link <?= $mode=='reg'?'active':'' ?>" href="register.php">注册</a></li><?php endif; ?>
-    </ul>
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="brand-logo">&#9993;</div>
+      <h4><?= htmlspecialchars($_siteName) ?></h4>
+      <p>登录以继续使用</p>
+    </div>
+
+    <?php if (cfg('allow_register') == '1'): ?>
+    <div class="auth-nav">
+      <a class="active" href="index.php">登录</a>
+      <a href="register.php">注册</a>
+    </div>
+    <?php endif; ?>
 
     <?php if ($err): ?><div class="alert alert-danger"><?= htmlspecialchars($err) ?></div><?php elseif ($msg): ?><div class="alert alert-success"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
 
-    <?php if ($mode == 'reg' && cfg('allow_register') == '1'): ?>
-      <form method="post">
-        <input type="hidden" name="act" value="reg">
-        <input name="user" class="form-control mb-2" placeholder="用户名" required>
-        <input name="pass" type="password" class="form-control mb-2" placeholder="密码" required>
-        <input name="email" type="email" class="form-control mb-2" placeholder="邮箱" required>
-        <?php if (cfg('require_invite') == '1'): ?>
-          <input name="invite" class="form-control mb-2" placeholder="卡密" required>
-        <?php endif; ?>
-        <button class="btn btn-success w-100">注册</button>
-      </form>
-    <?php else: ?>
-      <form method="post" autocomplete="off">
-        <input type="hidden" name="act" value="login">
-        <input name="user" class="form-control mb-2" placeholder="用户名" required>
-        <input name="pass" type="password" class="form-control mb-2" placeholder="密码" required>
+    <form method="post" autocomplete="off">
+      <input type="hidden" name="act" value="login">
+      <div class="mb-3">
+        <label class="form-label">用户名</label>
+        <input name="user" class="form-control" placeholder="请输入用户名" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">密码</label>
+        <input name="pass" type="password" class="form-control" placeholder="请输入密码" required>
+      </div>
 
-        <?php if ($loginCaptchaEnabled): ?>
-          <div class="captcha-wrap mb-2">
+      <?php if ($loginCaptchaEnabled): ?>
+        <div class="mb-3">
+          <label class="form-label">验证码</label>
+          <div class="captcha-wrap">
             <img id="captchaImg" class="captcha-img" src="captcha.php?t=<?= time() ?>" alt="验证码" title="点击刷新验证码" onclick="refreshCaptcha()">
             <input name="captcha" class="form-control" placeholder="请输入验证码" maxlength="5" required>
           </div>
-          <div class="form-text mb-2">看不清可点击验证码图片刷新</div>
-        <?php endif; ?>
-
-        <button class="btn btn-primary w-100">登录</button>
-      </form>
-
-      <?php if ($loginCaptchaEnabled): ?>
-      <script>
-      function refreshCaptcha() {
-        var img = document.getElementById('captchaImg');
-        if (img) {
-          img.src = 'captcha.php?t=' + Date.now();
-        }
-      }
-      </script>
+          <div class="form-text mt-1">看不清可点击验证码图片刷新</div>
+        </div>
       <?php endif; ?>
+
+      <button class="btn btn-primary w-100" style="padding: 0.65rem;">登录</button>
+    </form>
+
+    <?php if ($loginCaptchaEnabled): ?>
+    <script>
+    function refreshCaptcha() {
+      var img = document.getElementById('captchaImg');
+      if (img) {
+        img.src = 'captcha.php?t=' + Date.now();
+      }
+    }
+    </script>
     <?php endif; ?>
   </div>
 </div>

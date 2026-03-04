@@ -50,19 +50,20 @@ $serverIps = array_filter([
 ]);
 
 if ($ip !== '' && in_array($ip, $serverIps, true)) {
-    // Skip internal self-request (e.g. server-side preload)
-    exit;
-}
+    // 跳过服务端自身请求（如预加载）
+    // 继续输出响应内容但不记录日志
+} else {
+    $loc = ($ip !== '') ? fetch_location($ip) : '未知';
+    $db->prepare('INSERT INTO logs(code_id,ip,location,user_agent,created_at) VALUES (?,?,?,?,?)')
+       ->execute([$c['id'], $ip ?: '未知', $loc, $ua, $now]);
 
-$loc = fetch_location($ip);
-$db->prepare('INSERT INTO logs(code_id,ip,location,user_agent,created_at) VALUES (?,?,?,?,?)')
-   ->execute([$c['id'], $ip, $loc, $ua, $now]);
-
-$usr = $db->prepare('SELECT notif_email,notify_on FROM users WHERE id = ?');
-$usr->execute([$c['user_id']]);
-$u = $usr->fetch(PDO::FETCH_ASSOC);
-if ($u && $u['notify_on'] && $u['notif_email']) {
-    smtp_send($u['notif_email'], '追踪提醒', "{$c['name']} 被访问\nIP: {$ip} {$loc}\n{$now}");
+    $usr = $db->prepare('SELECT notif_email,notify_on FROM users WHERE id = ?');
+    $usr->execute([$c['user_id']]);
+    $u = $usr->fetch(PDO::FETCH_ASSOC);
+    if ($u && $u['notify_on'] && $u['notif_email']) {
+        $displayIp = $ip ?: '未知';
+        smtp_send($u['notif_email'], '追踪提醒', "{$c['name']} 被访问\nIP: {$displayIp} {$loc}\n{$now}");
+    }
 }
 
 switch ($type) {

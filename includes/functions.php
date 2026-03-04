@@ -1,6 +1,6 @@
 <?php
 /**
- * Common helper functions for Email Tracker
+ * 邮件追踪系统 - 通用函数
  */
 require_once __DIR__ . '/db.php';
 
@@ -139,11 +139,16 @@ function fetch_location($ip) {
     $raw = http_get_text('https://whois.pconline.com.cn/ipJson.jsp?json=true&ip=' . urlencode($ip), 1.8);
     $d = decode_json_auto($raw);
     if (is_array($d) && empty($d['err'])) {
-        $loc = format_location_parts([
-            $d['pro'] ?? '',
-            $d['city'] ?? '',
-            $d['addr'] ?? '',
-        ]);
+        // addr 字段通常已包含完整的省市+ISP信息，优先使用；为空时回退拼接 pro+city
+        $addr = trim($d['addr'] ?? '');
+        if ($addr !== '' && $addr !== 'XX') {
+            $loc = $addr;
+        } else {
+            $loc = format_location_parts([
+                $d['pro'] ?? '',
+                $d['city'] ?? '',
+            ]);
+        }
         if ($loc !== '') {
             return $cache[$ip] = $loc;
         }

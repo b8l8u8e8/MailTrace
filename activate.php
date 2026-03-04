@@ -17,6 +17,7 @@ $st->execute([$tok]);
 $pend = $st->fetch(PDO::FETCH_ASSOC);
 
 $msg = '';
+$success = false;
 
 if (!$pend) {
     $msg = '激活链接无效或已使用';
@@ -39,13 +40,11 @@ if (!$pend) {
     }
 
     if ($invite_ok) {
-        // 再次确认用户名未被抢注
         $st3 = $db->prepare('SELECT 1 FROM users WHERE username = ? LIMIT 1');
         $st3->execute([$pend['username']]);
         if ($st3->fetch()) {
             $msg = '激活失败：用户名已存在';
         } else {
-            // 事务处理
             try {
                 $db->beginTransaction();
 
@@ -60,6 +59,7 @@ if (!$pend) {
 
                 $db->commit();
                 $msg = '激活成功，可以登录了！';
+                $success = true;
             } catch (Exception $e) {
                 $db->rollBack();
                 $msg = '激活失败，请联系管理员';
@@ -70,8 +70,19 @@ if (!$pend) {
 
 include 'includes/header.php';
 ?>
-<div class="alert alert-info"><?=$msg?></div>
-<?php if ($msg === '激活成功，可以登录了！'): ?>
-  <a class="btn btn-success" href="index.php">立即登录</a>
-<?php endif; ?>
+
+<div class="result-card">
+  <?php if ($success): ?>
+    <div class="result-icon result-icon-success">&#10003;</div>
+    <h4>激活成功</h4>
+    <p>你的账户已成功激活，现在可以登录了。</p>
+    <a class="btn btn-success" href="index.php" style="padding: 0.6rem 2rem;">立即登录</a>
+  <?php else: ?>
+    <div class="result-icon result-icon-error">&#10007;</div>
+    <h4>激活失败</h4>
+    <p><?= htmlspecialchars($msg) ?></p>
+    <a class="btn btn-outline-secondary" href="index.php">返回首页</a>
+  <?php endif; ?>
+</div>
+
 <?php include 'includes/footer.php'; ?>
