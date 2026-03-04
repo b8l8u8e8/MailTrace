@@ -1,37 +1,90 @@
-<?php require_once 'includes/functions.php';
-$type=$_GET['type']??'img'; $tok=$_GET['k']??''; global $db;
-$stmt=$db->prepare('SELECT * FROM codes WHERE token=?');$stmt->execute([$tok]);$c=$stmt->fetch(PDO::FETCH_ASSOC); if(!$c) exit;
-$ip=$_SERVER['REMOTE_ADDR']??'';$ua=$_SERVER['HTTP_USER_AGENT']??'';$loc=fetch_location($ip);$now=date('Y-m-d H:i:s');
-// Skip self-server requests (e.g., when sending email)
-$serverIps = [$_SERVER['SERVER_ADDR'] ?? '', '127.0.0.1', '::1'];
-if(in_array($ip, $serverIps)){
-    // do not record or notify for internal calls
+<?php
+require_once 'includes/functions.php';
+
+global $db;
+$type = $_GET['type'] ?? 'img';
+$tok = $_GET['k'] ?? '';
+
+$stmt = $db->prepare('SELECT * FROM codes WHERE token = ?');
+$stmt->execute([$tok]);
+$c = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$c) {
     exit;
 }
-$db->prepare('INSERT INTO logs(code_id,ip,location,user_agent,created_at) VALUES (?,?,?,?,?)')->execute([$c['id'],$ip,$loc,$ua,$now]);
-$usr=$db->prepare('SELECT notif_email,notify_on FROM users WHERE id=?');$usr->execute([$c['user_id']]);$u=$usr->fetch(PDO::FETCH_ASSOC);
-if($u && $u['notify_on'] && $u['notif_email']) smtp_send($u['notif_email'],'追踪提醒',"{$c['name']} 被访问\nIP:$ip $loc\n$now");
 
-switch($type){
+function get_client_ip() {
+    $keys = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR'];
+    $fallback = '';
+
+    foreach ($keys as $key) {
+        if (empty($_SERVER[$key])) {
+            continue;
+        }
+
+        $value = $_SERVER[$key];
+        $parts = explode(',', $value);
+        foreach ($parts as $part) {
+            $ip = trim($part);
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                if (!is_private_or_reserved_ip($ip)) {
+                    return $ip;
+                }
+                if ($fallback === '') {
+                    $fallback = $ip;
+                }
+            }
+        }
+    }
+
+    return $fallback;
+}
+
+$ip = get_client_ip();
+$ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$now = date('Y-m-d H:i:s');
+
+$serverIps = array_filter([
+    $_SERVER['SERVER_ADDR'] ?? '',
+    '127.0.0.1',
+    '::1',
+]);
+
+if ($ip !== '' && in_array($ip, $serverIps, true)) {
+    // Skip internal self-request (e.g. server-side preload)
+    exit;
+}
+
+$loc = fetch_location($ip);
+$db->prepare('INSERT INTO logs(code_id,ip,location,user_agent,created_at) VALUES (?,?,?,?,?)')
+   ->execute([$c['id'], $ip, $loc, $ua, $now]);
+
+$usr = $db->prepare('SELECT notif_email,notify_on FROM users WHERE id = ?');
+$usr->execute([$c['user_id']]);
+$u = $usr->fetch(PDO::FETCH_ASSOC);
+if ($u && $u['notify_on'] && $u['notif_email']) {
+    smtp_send($u['notif_email'], '追踪提醒', "{$c['name']} 被访问\nIP: {$ip} {$loc}\n{$now}");
+}
+
+switch ($type) {
     case 'css':
-        header('Content-Type:text/css');
+        header('Content-Type: text/css; charset=utf-8');
         echo '/* tracker */';
         break;
+
     case 'bg':
     case 'img':
     case 'icon':
-        header('Content-Type:image/gif');
+        header('Content-Type: image/gif');
         echo base64_decode('R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
         break;
+
     case 'font':
-        // minimal empty font: returning gif disguised as woff still triggers request
-        header('Content-Type:font/woff');
-        echo base64_decode('d09GRgABAAAAA...');
+        http_response_code(204);
         break;
+
     case 'prefetch':
     default:
-        // generic 204 no content
         http_response_code(204);
+        break;
 }
-
 ?>

@@ -1,103 +1,229 @@
-
 <?php
 /**
  * Common helper functions for Email Tracker
  */
-require_once __DIR__.'/db.php';
+require_once __DIR__ . '/db.php';
 
 /**
  * Return the base URL of the application (protocol + host + path up to current directory)
  */
-function base_url(){
+function base_url() {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $path   = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $path = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
     return $scheme . '://' . $host . ($path ? '/' . ltrim($path, '/') : '');
 }
 
 /**
  * Read or update a key/value pair in the configs table.
- *  - If only $key is given, return the current value or empty string.
- *  - If $value is also supplied, write the value and return it.
  */
-function cfg($key, $value = null){
+function cfg($key, $value = null) {
     global $db;
-    if ($value === null){
+    if ($value === null) {
         $stmt = $db->prepare('SELECT value FROM configs WHERE key = ? LIMIT 1');
         $stmt->execute([$key]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row['value'] ?? '';
-    } else {
-        // Upsert (SQLite)
-        $stmt = $db->prepare('INSERT INTO configs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-        $stmt->execute([$key, $value]);
-        return $value;
     }
+
+    $stmt = $db->prepare('INSERT INTO configs(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    $stmt->execute([$key, $value]);
+    return $value;
 }
 
-/** Generate a 32‑character random token */
-function gen_token(){
+/** Generate a 32-character random token */
+function gen_token() {
     return bin2hex(random_bytes(16));
 }
 
 /**
- * Query a public API to convert an IP address to a rough location.
+ * HTTP GET helper with short timeout.
  */
-function fetch_location($ip){
-    $json = @file_get_contents("http://ip-api.com/json/{$ip}?lang=zh-CN");
-    if($json){
-        $d = json_decode($json, true);
-        if($d && $d['status'] === 'success'){
-            return $d['country'].' '.$d['regionName'].' '.$d['city'];
+function http_get_text($url, $timeout = 1.8) {
+    if (function_exists('curl_init')) {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => $timeout,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_USERAGENT => 'MailTrace/1.0',
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+        ]);
+        $resp = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($resp !== false && $code >= 200 && $code < 300) {
+            return $resp;
         }
+        return null;
     }
-    return '未知';
+
+    $ctx = stream_context_create([
+        'http' => [
+            'method' => 'GET',
+            'timeout' => $timeout,
+            'header' => "User-Agent: MailTrace/1.0\r\n",
+        ],
+        'ssl' => [
+            'verify_peer' => false,
+            'verify_peer_name' => false,
+        ],
+    ]);
+
+    $resp = @file_get_contents($url, false, $ctx);
+    return ($resp === false) ? null : $resp;
 }
 
 /**
- * 轻量 SMTP 发送（支持 SSL 465 / TLS 587 / 明文 25）
- * @return bool  发送成功返回 true
- * @param string $to      收件人邮箱
- * @param string $subject 邮件主题
- * @param string $body    邮件正文
- * @param string &$debug  调试信息（可选）
+ * Decode JSON and auto-handle GBK responses.
  */
-function smtp_send($to, $subject, $body, &$debug = ''){
-    $host   = cfg('smtp_host');
-    if(!$host){
-        // 未配置 SMTP，退化到 mail()
+function decode_json_auto($raw) {
+    if (!is_string($raw) || $raw === '') {
+        return null;
+    }
+
+    $raw = trim($raw);
+    $data = json_decode($raw, true);
+    if (is_array($data)) {
+        return $data;
+    }
+
+    if (function_exists('mb_convert_encoding')) {
+        $converted = @mb_convert_encoding($raw, 'UTF-8', 'UTF-8,GBK,GB2312,GB18030');
+        $data = json_decode($converted, true);
+        if (is_array($data)) {
+            return $data;
+        }
+    }
+
+    return null;
+}
+
+function is_private_or_reserved_ip($ip) {
+    if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+        return false;
+    }
+
+    return !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+}
+
+function format_location_parts(array $parts) {
+    $parts = array_values(array_filter(array_map('trim', $parts), static function ($v) {
+        return $v !== '' && $v !== 'XX' && $v !== '-';
+    }));
+
+    return $parts ? implode(' ', array_unique($parts)) : '';
+}
+
+/**
+ * Domestic-first IP location lookup with fallback.
+ */
+function fetch_location($ip) {
+    static $cache = [];
+
+    if (isset($cache[$ip])) {
+        return $cache[$ip];
+    }
+
+    if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+        return $cache[$ip] = '未知';
+    }
+
+    if (is_private_or_reserved_ip($ip)) {
+        return $cache[$ip] = '内网IP';
+    }
+
+    // 1) China Telecom PConline (domestic)
+    $raw = http_get_text('https://whois.pconline.com.cn/ipJson.jsp?json=true&ip=' . urlencode($ip), 1.8);
+    $d = decode_json_auto($raw);
+    if (is_array($d) && empty($d['err'])) {
+        $loc = format_location_parts([
+            $d['pro'] ?? '',
+            $d['city'] ?? '',
+            $d['addr'] ?? '',
+        ]);
+        if ($loc !== '') {
+            return $cache[$ip] = $loc;
+        }
+    }
+
+    // 2) Taobao IP service (domestic)
+    $raw = http_get_text('https://ip.taobao.com/outGetIpInfo?ip=' . urlencode($ip) . '&accessKey=alibaba-inc', 1.8);
+    $d = decode_json_auto($raw);
+    if (is_array($d) && isset($d['code']) && (int)$d['code'] === 0 && !empty($d['data']) && is_array($d['data'])) {
+        $loc = format_location_parts([
+            $d['data']['country'] ?? '',
+            $d['data']['region'] ?? '',
+            $d['data']['city'] ?? '',
+            $d['data']['isp'] ?? '',
+        ]);
+        if ($loc !== '') {
+            return $cache[$ip] = $loc;
+        }
+    }
+
+    // 3) Fallback to international provider
+    $raw = http_get_text('http://ip-api.com/json/' . urlencode($ip) . '?lang=zh-CN', 1.5);
+    $d = decode_json_auto($raw);
+    if (is_array($d) && ($d['status'] ?? '') === 'success') {
+        $loc = format_location_parts([
+            $d['country'] ?? '',
+            $d['regionName'] ?? '',
+            $d['city'] ?? '',
+        ]);
+        if ($loc !== '') {
+            return $cache[$ip] = $loc;
+        }
+    }
+
+    return $cache[$ip] = '未知';
+}
+
+/**
+ * Lightweight SMTP sender (SSL 465 / TLS 587 / plain 25).
+ */
+function smtp_send($to, $subject, $body, &$debug = '') {
+    $host = cfg('smtp_host');
+    if (!$host) {
+        // SMTP not configured: fallback to mail()
         return mail($to, $subject, $body, "Content-Type:text/plain; charset=utf-8");
     }
-    $port   = intval(cfg('smtp_port') ?: 25);
-    $user   = cfg('smtp_user');
-    $pass   = cfg('smtp_pass');
+
+    $port = intval(cfg('smtp_port') ?: 25);
+    $user = cfg('smtp_user');
+    $pass = cfg('smtp_pass');
     $secure = strtolower(cfg('smtp_secure')); // '', 'ssl', 'tls'
 
     $remote = ($secure === 'ssl' ? 'ssl://' : '') . $host . ':' . $port;
-    $ctx    = stream_context_create([
+    $ctx = stream_context_create([
         'ssl' => [
-            'verify_peer'       => false,
-            'verify_peer_name'  => false,
+            'verify_peer' => false,
+            'verify_peer_name' => false,
             'allow_self_signed' => true,
-        ]
+        ],
     ]);
 
     $fp = @stream_socket_client($remote, $errno, $errstr, 10, STREAM_CLIENT_CONNECT, $ctx);
-    if(!$fp){
+    if (!$fp) {
         $debug = "连接 SMTP 失败: $errno $errstr";
         return false;
     }
 
-    $read = function() use ($fp, &$debug){
+    $read = function () use ($fp, &$debug) {
         $out = '';
-        while($l = fgets($fp)){
+        while ($l = fgets($fp)) {
             $out .= $l;
-            if(preg_match('/^\d{3} /', $l)) break;
+            if (preg_match('/^\d{3} /', $l)) {
+                break;
+            }
         }
         $debug .= $out;
         return $out;
     };
-    $send = function($cmd) use ($fp, $read, &$debug){
+
+    $send = function ($cmd) use ($fp, $read, &$debug) {
         fputs($fp, $cmd . "\r\n");
         $debug .= "> $cmd\r\n";
         return $read();
@@ -106,13 +232,13 @@ function smtp_send($to, $subject, $body, &$debug = ''){
     $read();
     $send('EHLO localhost');
 
-    if($secure === 'tls'){
+    if ($secure === 'tls') {
         $send('STARTTLS');
         stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
         $send('EHLO localhost');
     }
 
-    if($user){
+    if ($user) {
         $send('AUTH LOGIN');
         $send(base64_encode($user));
         $send(base64_encode($pass));
@@ -121,15 +247,17 @@ function smtp_send($to, $subject, $body, &$debug = ''){
     $from = cfg('smtp_from') ?: $user;
     $send("MAIL FROM:<{$from}>");
     $send("RCPT TO:<{$to}>");
-    $send("DATA");
+    $send('DATA');
+
     fputs(
         $fp,
-        "Subject: {$subject}\r\n".
-        "From: {$from}\r\n".
-        "To: {$to}\r\n".
-        "Content-Type:text/plain; charset=utf-8\r\n\r\n".
+        "Subject: {$subject}\r\n" .
+        "From: {$from}\r\n" .
+        "To: {$to}\r\n" .
+        "Content-Type:text/plain; charset=utf-8\r\n\r\n" .
         "{$body}\r\n.\r\n"
     );
+
     $read();
     $send('QUIT');
     fclose($fp);

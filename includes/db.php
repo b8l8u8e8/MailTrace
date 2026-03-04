@@ -90,7 +90,8 @@ try {
             'smtp_pass'      => '',
             'smtp_secure'    => 'ssl',
             'smtp_from'      => '',
-            'smtp_debug'     => '0'
+            'smtp_debug'     => '0',
+            'login_captcha'  => '1'
         ];
 
         $ins = $db->prepare('INSERT INTO configs(key, value) VALUES (:k, :v)');
@@ -137,6 +138,9 @@ try {
     $maybeAddColumn('users', 'created_at DATETIME');
     $maybeAddColumn('pending', 'password_hash TEXT');
     $maybeAddColumn('invite_codes', 'used_at DATETIME');
+
+    // 3. Ensure newly introduced config keys exist
+    $db->exec("INSERT OR IGNORE INTO configs(key, value) VALUES ('login_captcha', '1');");
 
 } catch (PDOException $e) {
     die('DB错误:' . $e->getMessage());
