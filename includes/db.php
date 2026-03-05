@@ -31,7 +31,8 @@ try {
                 email          TEXT,
                 email_verified INTEGER DEFAULT 0,
                 notif_email    TEXT,
-                notify_on      INTEGER DEFAULT 0
+                notify_on      INTEGER DEFAULT 0,
+                auth_version   INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS codes (
@@ -138,9 +139,19 @@ try {
     $maybeAddColumn('users', 'created_at DATETIME');
     $maybeAddColumn('pending', 'password_hash TEXT');
     $maybeAddColumn('invite_codes', 'used_at DATETIME');
+    $maybeAddColumn('users', 'auth_version INTEGER DEFAULT 1');
+    $db->exec("UPDATE users SET auth_version = 1 WHERE auth_version IS NULL OR auth_version < 1;");
 
     // 3. Ensure newly introduced config keys exist
     $db->exec("INSERT OR IGNORE INTO configs(key, value) VALUES ('login_captcha', '1');");
+    $db->exec("INSERT OR IGNORE INTO configs(key, value) VALUES ('site_name', '邮件追踪');");
+    $stNormalizeSiteName = $db->prepare("
+        UPDATE configs
+        SET value = '邮件追踪'
+        WHERE key = 'site_name'
+          AND (value IS NULL OR TRIM(value) = '' OR value IN ('Email-Tracker', 'Email‑Tracker', 'Email Tracker', '追踪系统'))
+    ");
+    $stNormalizeSiteName->execute();
 
     // 4. Performance indexes (IF NOT EXISTS is safe to run every time)
     $db->exec("CREATE INDEX IF NOT EXISTS idx_codes_user_id ON codes(user_id);");

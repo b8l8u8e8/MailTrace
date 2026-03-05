@@ -11,6 +11,10 @@ $err = '';
 $msg = '';
 $loginCaptchaEnabled = (cfg('login_captcha') === '' || cfg('login_captcha') === '1');
 
+if (($_GET['relogin'] ?? '') === '1') {
+    $msg = '用户名或密码已修改，请重新登录。';
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($_POST['act'] ?? '') === 'login') {
         if ($loginCaptchaEnabled) {
@@ -41,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 include 'includes/header.php';
-$_siteName = cfg('site_name') ?: '追踪系统';
+$_siteName = cfg('site_name') ?: '邮件追踪';
 ?>
 <div class="auth-wrapper">
   <div class="auth-card">

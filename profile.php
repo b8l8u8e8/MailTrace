@@ -9,36 +9,44 @@ $u = current_user();
 $msg = '';
 $err = '';
 
+// Backward compatibility: old client pages may still post "delete".
 if (isset($_POST['delete'])) {
-    $id = $u['id'];
-    $db->prepare('DELETE FROM logs WHERE code_id IN (SELECT id FROM codes WHERE user_id=?)')->execute([$id]);
-    $db->prepare('DELETE FROM codes WHERE user_id=?')->execute([$id]);
-    $db->prepare('DELETE FROM users WHERE id=?')->execute([$id]);
-    logout();
+    $err = '账号删除功能已关闭，请联系管理员。';
 }
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save'])) {
-    $newuser = trim($_POST['username']);
-    $cur = $_POST['cur'];
-    $newp = $_POST['new'];
-    $st = $db->prepare('SELECT * FROM users WHERE id=?');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save'])) {
+    $newuser = trim($_POST['username'] ?? '');
+    $cur = $_POST['cur'] ?? '';
+    $newp = $_POST['new'] ?? '';
+
+    $st = $db->prepare('SELECT * FROM users WHERE id = ? LIMIT 1');
     $st->execute([$u['id']]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
 
     if ($row && password_verify($cur, $row['password_hash'])) {
-        if ($newuser && $newuser != $u['username']) {
+        $credentialChanged = false;
+
+        if ($newuser !== '' && $newuser !== $u['username']) {
             try {
-                $db->prepare('UPDATE users SET username=? WHERE id=?')->execute([$newuser, $u['id']]);
-                $_SESSION['user']['username'] = $newuser;
+                $db->prepare('UPDATE users SET username = ? WHERE id = ?')->execute([$newuser, $u['id']]);
+                $credentialChanged = true;
             } catch (PDOException $e) {
                 $err = '用户名已存在';
             }
         }
-        if ($newp) {
-            $db->prepare('UPDATE users SET password_hash=? WHERE id=?')->execute([password_hash($newp, PASSWORD_DEFAULT), $u['id']]);
+
+        if (!$err && $newp !== '') {
+            $db->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+               ->execute([password_hash($newp, PASSWORD_DEFAULT), $u['id']]);
+            $credentialChanged = true;
         }
+
         if (!$err) {
-            $msg = '已更新';
+            if ($credentialChanged) {
+                invalidate_user_auth($u['id']);
+                logout('index.php?relogin=1');
+            }
+            $msg = '未检测到用户名或密码变更';
         }
     } else {
         $err = '当前密码错误';
@@ -77,13 +85,6 @@ include 'includes/header.php';
         <input name="new" type="password" class="form-control" placeholder="留空则不修改">
       </div>
       <button class="btn btn-primary w-100" style="padding: 0.65rem;">保存修改</button>
-    </form>
-
-    <hr style="border-color: var(--gray-200); margin: 1.5rem 0 1rem;">
-
-    <form method="post" onsubmit="return confirm('确定删除账户? 所有数据将不可恢复！');">
-      <button class="btn btn-danger w-100" name="delete" style="padding: 0.65rem;">删除账户</button>
-      <div class="form-text mt-2 text-center">删除后所有数据将永久丢失，无法恢复</div>
     </form>
   </div>
 </div>

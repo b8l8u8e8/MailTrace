@@ -1,6 +1,6 @@
 <?php require_once __DIR__.'/auth.php'; require_once __DIR__.'/functions.php';
 $_currentPage = basename($_SERVER['PHP_SELF']);
-$_siteName = cfg('site_name') ?: '追踪系统';
+$_siteName = cfg('site_name') ?: '邮件追踪';
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">

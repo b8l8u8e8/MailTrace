@@ -77,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 include 'includes/header.php';
-$_siteName = cfg('site_name') ?: '追踪系统';
+$_siteName = cfg('site_name') ?: '邮件追踪';
 ?>
 
 <div class="auth-wrapper">

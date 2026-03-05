@@ -90,20 +90,40 @@ if (isset($_POST['upd_user'])) {
     $uid = intval($_POST['uid'] ?? 0);
     $newu = trim($_POST['uname'] ?? '');
     $newp = $_POST['upass'] ?? '';
+    $updateFailed = false;
+    $credentialChanged = false;
 
-    if ($newu !== '') {
+    $stCurrent = $db->prepare('SELECT username FROM users WHERE id = ? LIMIT 1');
+    $stCurrent->execute([$uid]);
+    $target = $stCurrent->fetch(PDO::FETCH_ASSOC);
+    if (!$target) {
+        $msg = '用户不存在';
+        $updateFailed = true;
+    }
+
+    if (!$updateFailed && $newu !== '' && $newu !== $target['username']) {
         try {
             $db->prepare('UPDATE users SET username=? WHERE id=?')->execute([$newu, $uid]);
+            $credentialChanged = true;
         } catch (PDOException $e) {
             $msg = '用户名重复';
+            $updateFailed = true;
         }
     }
 
-    if ($newp !== '') {
+    if (!$updateFailed && $newp !== '') {
         $db->prepare('UPDATE users SET password_hash=? WHERE id=?')->execute([password_hash($newp, PASSWORD_DEFAULT), $uid]);
+        $credentialChanged = true;
     }
 
-    if ($msg === '') {
+    if (!$updateFailed && $credentialChanged) {
+        invalidate_user_auth($uid);
+        if ($uid === current_user()['id']) {
+            logout('index.php?relogin=1');
+        }
+    }
+
+    if (!$updateFailed) {
         $msg = '用户信息已更新';
     }
 }
